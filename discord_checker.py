@@ -83,20 +83,20 @@ class Checker(QThread):
                     except:
                         retry_seconds = 60
                     
-                    self.update.emit(f"⚠️ [RATE LIMIT] {username}: Waiting {retry_seconds}s...")
+                    self.update.emit(f"[RATE LIMIT] {username}: Waiting {retry_seconds}s...")
                     await self.cooldown(retry_seconds, "Rate limit hit")
                     return None
                 
                 elif status == 401:
-                    self.update.emit(f"❌ [AUTH ERROR] {username}: Invalid token")
+                    self.update.emit(f"[AUTH ERROR] {username}: Invalid token")
                     return None
                 
                 else:
-                    self.update.emit(f"⚠️ [ERROR] {username}: Status {status}")
+                    self.update.emit(f"[ERROR] {username}: Status {status}")
                     return None
                     
         except Exception as e:
-            self.update.emit(f"⚠️ [ERROR] {username}: {str(e)[:80]}")
+            self.update.emit(f"[ERROR] {username}: {str(e)[:80]}")
             return None
 
     async def check_legacy_username(self, username, discriminator, session, proxy=None):
@@ -121,7 +121,7 @@ class Checker(QThread):
                     self.update.emit(f"[DEBUG] Status Code: {status}")
                 
                 if status == 200:
-                    self.update.emit(f"✅ [AVAILABLE] {username}#{discriminator}")
+                    self.update.emit(f"[AVAILABLE] {username}#{discriminator}")
                     return True
                 
                 elif status == 400:
@@ -129,23 +129,23 @@ class Checker(QThread):
                     errors = data.get("errors", {})
                     
                     if "username" in errors:
-                        self.update.emit(f"❌ [TAKEN/INVALID] {username}#{discriminator}")
+                        self.update.emit(f"[TAKEN/INVALID] {username}#{discriminator}")
                     else:
-                        self.update.emit(f"⚠️ [ERROR] {username}#{discriminator}: {errors}")
+                        self.update.emit(f"[ERROR] {username}#{discriminator}: {errors}")
                     return False
                 
                 elif status == 429:
-                    self.update.emit(f"⚠️ [RATE LIMIT] {username}#{discriminator}")
+                    self.update.emit(f"[RATE LIMIT] {username}#{discriminator}")
                     retry_after = int(resp.headers.get('Retry-After', 5))
                     await asyncio.sleep(retry_after)
                     return None
                 
                 else:
-                    self.update.emit(f"⚠️ [ERROR] {username}#{discriminator}: Status {status}")
+                    self.update.emit(f"[ERROR] {username}#{discriminator}: Status {status}")
                     return None
                     
         except Exception as e:
-            self.update.emit(f"⚠️ [ERROR] {username}: {str(e)[:80]}")
+            self.update.emit(f"[ERROR] {username}: {str(e)[:80]}")
             return None
 
     async def check_user(self, username, sem, session, lock, idx):
@@ -165,7 +165,7 @@ class Checker(QThread):
                         uname, disc = username.split("#", 1)
                         result = await self.check_legacy_username(uname, disc, session, proxy)
                     else:
-                        self.update.emit(f"⚠️ [ERROR] {username}: Legacy mode requires format username#1234")
+                        self.update.emit(f"[ERROR] {username}: Legacy mode requires format username#1234")
                         result = None
                 
                 if result is None:
@@ -175,16 +175,16 @@ class Checker(QThread):
                     self.consecutive_errors = 0
                     
             except aiohttp.ClientProxyConnectionError:
-                self.update.emit(f"⚠️ [PROXY ERROR] {username}: Could not connect via proxy")
+                self.update.emit(f"[PROXY ERROR] {username}: Could not connect via proxy")
                 self.consecutive_errors += 1
             except asyncio.TimeoutError:
                 self.consecutive_errors += 1
-                self.update.emit(f"⏱️ [TIMEOUT] {username}")
+                self.update.emit(f"[TIMEOUT] {username}")
                 await self.check_for_cooldown()
             except Exception as e:
                 self.consecutive_errors += 1
                 error_msg = str(e)[:80]
-                self.update.emit(f"⚠️ [ERROR] {username}: {error_msg}")
+                self.update.emit(f"[ERROR] {username}: {error_msg}")
                 await self.check_for_cooldown()
             finally:
                 async with lock:
@@ -199,16 +199,16 @@ class Checker(QThread):
 
     async def cooldown(self, duration, reason):
         """Pause checking for a specified duration"""
-        self.update.emit(f"\n🛑 COOLDOWN: {reason}!")
-        self.update.emit(f"⏸️ Pausing for {duration} seconds...")
+        self.update.emit(f"\n COOLDOWN: {reason}!")
+        self.update.emit(f"Pausing for {duration} seconds...")
         
         for remaining in range(duration, 0, -1):
             if not self.running:
                 break
-            self.update.emit(f"⏳ Resuming in {remaining} seconds...")
+            self.update.emit(f"Resuming in {remaining} seconds...")
             await asyncio.sleep(1)
         
-        self.update.emit(f"✅ Cooldown complete! Continuing...\n")
+        self.update.emit(f"Cooldown complete! Continuing...\n")
 
     async def main(self):
         # Adjust concurrency based on proxy availability
@@ -219,9 +219,9 @@ class Checker(QThread):
         lock = asyncio.Lock()
         
         if self.proxies:
-            self.update.emit(f"📡 Using {len(self.proxies)} proxies with {concurrent_limit} concurrent requests\n")
+            self.update.emit(f"Using {len(self.proxies)} proxies with {concurrent_limit} concurrent requests\n")
         else:
-            self.update.emit(f"⚠️ No proxies loaded - using direct connection (may hit rate limits)\n")
+            self.update.emit(f"No proxies loaded - using direct connection (may hit rate limits)\n")
 
         headers = {
             "User-Agent": self.user_agent,
@@ -263,7 +263,7 @@ class App(QMainWindow):
         wid.setLayout(main_layout)
 
         # Title
-        title = QLabel("💬 Discord Username Checker")
+        title = QLabel("Discord Username Checker")
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
