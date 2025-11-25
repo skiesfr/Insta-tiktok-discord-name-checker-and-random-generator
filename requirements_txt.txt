@@ -1,0 +1,31 @@
+aiohttp>=3.9.0
+PyQt5>=5.15.0
+brotli>=1.1.0
+
+# Instagram Username Checker Requirements
+# 
+# Installation Instructions:
+# 
+# Windows:
+#   pip install -r requirements.txt
+#   python ig_checker_final.py
+# 
+# Mac/Linux:
+#   pip3 install -r requirements.txt
+#   python3 ig_checker_final.py
+# 
+# What each package does:
+#   - aiohttp: Async HTTP requests for fast checking
+#   - PyQt5: GUI framework for the application window
+#   - brotli: Compression support for Instagram responses
+# 
+# Troubleshooting:
+# 
+# PyQt5 won't install on Mac M1/M2?
+#   pip3 install PyQt5 --no-binary PyQt5
+#   or: brew install pyqt5
+# 
+# Permission errors?
+#   pip install --user -r requirements.txt
+# 
+# Python version required: 3.8 or higher
