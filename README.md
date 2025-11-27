@@ -29,7 +29,7 @@
  has a no proxy version implemented but its gonna be a pain to search names
 ### :3 
 ## added roblox checker
-has auto create ccoutn
+has auto create account from: https://github.com/qing762/roblox-auto-signup credts
 name checker
 and webhook to know what are available
 and others features from the other like generator
