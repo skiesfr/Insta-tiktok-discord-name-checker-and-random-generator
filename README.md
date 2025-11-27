@@ -28,3 +28,8 @@
  has the same features as the instagram and tik tok
  has a no proxy version implemented but its gonna be a pain to search names
 ### :3 
+## added roblox checker
+has auto create ccoutn
+name checker
+and webhook to know what are available
+and others features from the other like generator
