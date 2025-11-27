@@ -1,7 +1,14 @@
-import sys, requests, asyncio, random, string, traceback
+import sys, requests, asyncio, random, string, traceback, json
+from datetime import datetime
 from PyQt5.QtWidgets import *
 from PyQt5.QtCore import *
 from PyQt5.QtGui import QFont
+
+try:
+    from DrissionPage import Chromium, ChromiumOptions, errors
+    DRISSION_AVAILABLE = True
+except ImportError:
+    DRISSION_AVAILABLE = False
 
 # ------------------- Checker Thread ------------------- #
 class Checker(QThread):
@@ -9,7 +16,7 @@ class Checker(QThread):
     pupdate = pyqtSignal(int)
     count = 0
 
-    def __init__(self, usernames, webhook_url=None, debug=False):
+    def __init__(self, usernames, webhook_url=None, debug=False, auto_signup=False, signup_password=None):
         super().__init__()
         self.usernames = usernames
         self.webhook_url = webhook_url
@@ -17,6 +24,9 @@ class Checker(QThread):
         self.debug = debug
         self.consecutive_errors = 0
         self.max_errors_before_pause = 3
+        self.auto_signup = auto_signup
+        self.signup_password = signup_password or "RobloxGen2024!"
+        self.created_accounts = []
 
     def run(self):
         for i, username in enumerate(self.usernames):
@@ -60,13 +70,22 @@ class Checker(QThread):
                         self.consecutive_errors = 0
                         return
                 
-                # If we get here, username is available
+                # Username is available
                 self.update.emit(f"✅ [AVAILABLE] {username}")
                 self.consecutive_errors = 0
                 
                 # Send to Discord webhook if provided
                 if self.webhook_url:
                     self.send_to_discord(username)
+                
+                # Auto sign-up if enabled
+                if self.auto_signup and DRISSION_AVAILABLE:
+                    self.update.emit(f"🔄 [AUTO-SIGNUP] Attempting to create account: {username}")
+                    success = self.create_account(username)
+                    if success:
+                        self.update.emit(f"🎉 [SUCCESS] Account created: {username}")
+                    else:
+                        self.update.emit(f"⚠️ [FAILED] Could not create account: {username}")
                 
             elif response.status_code == 429:
                 self.update.emit(f"⚠️ [RATE LIMIT] {username}: Slow down!")
@@ -89,6 +108,207 @@ class Checker(QThread):
                 error_msg = str(e)
                 self.update.emit(f"⚠️ [ERROR] {username}: {error_msg}")
 
+    def create_account(self, username):
+        """Create a Roblox account using DrissionPage"""
+        if not DRISSION_AVAILABLE:
+            self.update.emit(f"[DEBUG] DrissionPage not available")
+            return False
+        
+        chrome = None
+        try:
+            co = ChromiumOptions()
+            co.set_argument("--lang", "en")
+            co.auto_port().mute(True)
+            # Browser must be visible to properly detect redirects
+            
+            if self.debug:
+                self.update.emit(f"[DEBUG] Initializing browser for {username}")
+            
+            chrome = Chromium(addr_or_opts=co)
+            page = chrome.latest_tab
+            
+            if self.debug:
+                self.update.emit(f"[DEBUG] Navigating to signup page")
+            
+            # Navigate to signup page
+            page.get("https://www.roblox.com/CreateAccount")
+            
+            # Accept cookies if present
+            try:
+                page.ele('@class=btn-cta-lg cookie-btn btn-primary-md btn-min-width', timeout=3).click()
+                if self.debug:
+                    self.update.emit(f"[DEBUG] Accepted cookies")
+            except:
+                if self.debug:
+                    self.update.emit(f"[DEBUG] No cookie banner found")
+            
+            # Set birthday (random adult age)
+            from datetime import datetime
+            import locale
+            import time
+            
+            if self.debug:
+                self.update.emit(f"[DEBUG] Setting birthday")
+            
+            bdaymonthelement = page.ele("#MonthDropdown", timeout=10)
+            oldLocale = locale.getlocale(locale.LC_TIME)
+            try:
+                locale.setlocale(locale.LC_TIME, 'C')
+                currentMonth = datetime.now().strftime("%b")
+            finally:
+                try:
+                    locale.setlocale(locale.LC_TIME, oldLocale)
+                except:
+                    pass
+            
+            bdaymonthelement.select.by_value(currentMonth)
+            
+            bdaydayelement = page.ele("#DayDropdown", timeout=10)
+            currentDay = datetime.now().day
+            if currentDay <= 9:
+                bdaydayelement.select.by_value(f"0{currentDay}")
+            else:
+                bdaydayelement.select.by_value(str(currentDay))
+            
+            currentYear = datetime.now().year - 19
+            page.ele("#YearDropdown", timeout=10).select.by_value(str(currentYear))
+            
+            if self.debug:
+                self.update.emit(f"[DEBUG] Entering credentials")
+            
+            # Enter username and password
+            page.ele("#signup-username", timeout=10).input(username)
+            time.sleep(0.5)
+            page.ele("#signup-password", timeout=10).input(self.signup_password)
+            
+            # Wait a moment
+            time.sleep(2)
+            
+            # Accept terms
+            try:
+                checkbox = page.ele('@@id=signup-checkbox@@class=checkbox', timeout=3)
+                checkbox.click()
+                if self.debug:
+                    self.update.emit(f"[DEBUG] Accepted terms checkbox")
+            except:
+                # Try alternative checkbox selector
+                try:
+                    checkbox = page.ele('#signup-checkbox', timeout=2)
+                    checkbox.click()
+                    if self.debug:
+                        self.update.emit(f"[DEBUG] Accepted terms checkbox (alt method)")
+                except:
+                    if self.debug:
+                        self.update.emit(f"[DEBUG] Terms checkbox not required or already checked")
+                    pass
+            
+            time.sleep(1)
+            
+            if self.debug:
+                self.update.emit(f"[DEBUG] Submitting signup form")
+            
+            # Submit signup
+            page.ele("@@id=signup-button@@name=signupSubmit", timeout=10).click()
+            
+            # Wait longer and check for errors
+            time.sleep(8)
+            
+            # Check for error messages
+            try:
+                error_element = page.ele(".text-error", timeout=2)
+                if error_element:
+                    error_text = error_element.text
+                    self.update.emit(f"⚠️ [SIGNUP ERROR] {username}: {error_text}")
+                    if chrome:
+                        chrome.quit()
+                    return False
+            except:
+                pass
+            
+            # Check current URL
+            current_url = page.url
+            if self.debug:
+                self.update.emit(f"[DEBUG] Current URL: {current_url}")
+            
+            # Check if we're redirected to home (success)
+            if "home" in current_url.lower() or "/home" in current_url:
+                if self.debug:
+                    self.update.emit(f"[DEBUG] Successfully created account, getting cookies")
+                
+                # Get cookies
+                cookies = []
+                for cookie in page.cookies():
+                    cookies.append({
+                        "name": cookie["name"],
+                        "value": cookie["value"]
+                    })
+                
+                # Save account
+                account_data = {
+                    "username": username,
+                    "password": self.signup_password,
+                    "cookies": cookies,
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                }
+                self.created_accounts.append(account_data)
+                
+                # Save to file
+                self.save_account(account_data)
+                
+                if chrome:
+                    chrome.quit()
+                return True
+            else:
+                # Check if there's a captcha
+                try:
+                    captcha = page.get_frame('xpath://*[@id="arkose-iframe"]')
+                    if captcha:
+                        self.update.emit(f"⚠️ [CAPTCHA] {username}: Captcha detected, cannot auto-complete")
+                except:
+                    pass
+                
+                if self.debug:
+                    self.update.emit(f"[DEBUG] Signup did not redirect to home page")
+                
+                if chrome:
+                    chrome.quit()
+                return False
+                
+        except Exception as e:
+            error_msg = str(e)
+            if self.debug:
+                error_msg = traceback.format_exc()
+            self.update.emit(f"⚠️ [SIGNUP ERROR] {username}: {error_msg}")
+            try:
+                if chrome:
+                    chrome.quit()
+            except:
+                pass
+            return False
+    
+    def save_account(self, account_data):
+        """Save created account to files"""
+        try:
+            # Save to accounts.txt
+            with open("auto_created_accounts.txt", "a", encoding="utf-8") as f:
+                f.write(f"Username: {account_data['username']}, Password: {account_data['password']} (Created: {account_data['created_at']})\n")
+            
+            # Save to JSON with cookies
+            try:
+                with open("auto_created_cookies.json", "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except:
+                existing = []
+            
+            existing.append(account_data)
+            
+            with open("auto_created_cookies.json", "w", encoding="utf-8") as f:
+                json.dump(existing, f, indent=4)
+                
+        except Exception as e:
+            if self.debug:
+                self.update.emit(f"[DEBUG] Error saving account: {str(e)}")
+
     def send_to_discord(self, username):
         """Send available username to Discord webhook"""
         try:
@@ -96,7 +316,7 @@ class Checker(QThread):
                 "embeds": [{
                     "title": "🎮 Available Roblox Username Found!",
                     "description": f"**Username:** `{username}`",
-                    "color": 3447003,  # Blue color
+                    "color": 3447003,
                     "fields": [
                         {
                             "name": "🔗 Direct Link",
@@ -127,8 +347,8 @@ class Checker(QThread):
 class App(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Roblox Username Checker")
-        self.setGeometry(150, 150, 1100, 800)
+        self.setWindowTitle("Roblox Username Checker with Auto Sign-Up")
+        self.setGeometry(150, 150, 1100, 850)
         self.thread = None
         self.initUI()
 
@@ -139,7 +359,7 @@ class App(QMainWindow):
         wid.setLayout(main_layout)
 
         # Title
-        title = QLabel("🎮 Roblox Username Checker")
+        title = QLabel("🎮 Roblox Username Checker + Auto Sign-Up")
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
@@ -148,11 +368,11 @@ class App(QMainWindow):
         main_layout.addWidget(title)
 
         # Info Section
-        info_group = QGroupBox("ℹ️ About Roblox Username Checker")
+        info_group = QGroupBox("ℹ️ About This Tool")
         info_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         info_layout = QVBoxLayout()
         
-        instruction = QLabel("✨ No login required! This checker uses Roblox's public API.\n⚠️ Note: Roblox may rate limit requests if you check too many at once.")
+        instruction = QLabel("✨ Check username availability using Roblox's public API\n🤖 NEW: Automatically create accounts for available usernames!\n⚠️ Note: Rate limits may apply. Auto sign-up requires DrissionPage library.")
         instruction.setWordWrap(True)
         instruction.setStyleSheet("background-color: #e7f3ff; padding: 10px; border-radius: 3px; color: #004085;")
         info_layout.addWidget(instruction)
@@ -160,12 +380,50 @@ class App(QMainWindow):
         info_group.setLayout(info_layout)
         main_layout.addWidget(info_group)
 
+        # Auto Sign-Up Section
+        signup_group = QGroupBox("🤖 Auto Sign-Up Settings")
+        signup_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        signup_layout = QVBoxLayout()
+        
+        checkbox_layout = QHBoxLayout()
+        self.auto_signup_checkbox = QCheckBox("Enable Auto Sign-Up for Available Usernames")
+        if not DRISSION_AVAILABLE:
+            self.auto_signup_checkbox.setEnabled(False)
+            self.auto_signup_checkbox.setToolTip("Install DrissionPage: pip install DrissionPage")
+        checkbox_layout.addWidget(self.auto_signup_checkbox)
+        
+        if not DRISSION_AVAILABLE:
+            install_btn = QPushButton("📥 Install DrissionPage")
+            install_btn.setMaximumWidth(180)
+            install_btn.setStyleSheet("background-color: #ff9800; color: white; padding: 5px; font-weight: bold;")
+            install_btn.clicked.connect(self.install_drissionpage)
+            checkbox_layout.addWidget(install_btn)
+        
+        checkbox_layout.addStretch()
+        signup_layout.addLayout(checkbox_layout)
+        
+        password_layout = QHBoxLayout()
+        password_layout.addWidget(QLabel("Account Password:"))
+        self.signup_password_input = QLineEdit("RobloxGen2024!")
+        self.signup_password_input.setPlaceholderText("Password for created accounts")
+        password_layout.addWidget(self.signup_password_input)
+        signup_layout.addLayout(password_layout)
+        
+        if not DRISSION_AVAILABLE:
+            warning = QLabel("⚠️ DrissionPage not installed. Click the button above to install it automatically, or run: pip install DrissionPage")
+            warning.setStyleSheet("background-color: #fff3cd; padding: 8px; border-radius: 3px; color: #856404;")
+            warning.setWordWrap(True)
+            signup_layout.addWidget(warning)
+        
+        signup_group.setLayout(signup_layout)
+        main_layout.addWidget(signup_group)
+
         # Webhook Section
         webhook_group = QGroupBox("🔔 Discord Webhook (Optional)")
         webhook_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         webhook_layout = QVBoxLayout()
         
-        webhook_info = QLabel("💬 Paste your Discord webhook URL to get notified when available usernames are found!")
+        webhook_info = QLabel("💬 Get notified when available usernames are found!")
         webhook_info.setWordWrap(True)
         webhook_info.setStyleSheet("background-color: #f8d7da; padding: 8px; border-radius: 3px; color: #721c24;")
         webhook_layout.addWidget(webhook_info)
@@ -189,7 +447,6 @@ class App(QMainWindow):
         gen_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         gen_layout = QVBoxLayout()
         
-        # First row - basic options
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("Length:"))
         self.length_input = QLineEdit("5")
@@ -216,7 +473,6 @@ class App(QMainWindow):
         row1.addStretch()
         gen_layout.addLayout(row1)
         
-        # Second row - pattern options
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("Pattern:"))
         self.pattern_combo = QComboBox()
@@ -235,7 +491,7 @@ class App(QMainWindow):
         self.gen_button.setStyleSheet("background-color: #3498db; color: white; padding: 8px; font-weight: bold;")
         row2.addWidget(self.gen_button)
         
-        self.debug_checkbox = QCheckBox("🐛 Debug Mode (Detailed)")
+        self.debug_checkbox = QCheckBox("🛠 Debug Mode")
         self.debug_checkbox.setToolTip("Show detailed API responses")
         row2.addWidget(self.debug_checkbox)
         
@@ -250,7 +506,6 @@ class App(QMainWindow):
         io_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         io_layout = QHBoxLayout()
         
-        # Input side
         input_box = QVBoxLayout()
         input_label = QLabel("📝 Usernames to Check:")
         input_label.setStyleSheet("font-weight: bold;")
@@ -260,7 +515,6 @@ class App(QMainWindow):
         self.input_text.setPlaceholderText("Enter usernames here\n(one per line)\n\nExample:\nCoolGamer123\nProPlayer\nEpicUser")
         input_box.addWidget(self.input_text)
         
-        # Output side
         output_box = QVBoxLayout()
         output_label = QLabel("📊 Results:")
         output_label.setStyleSheet("font-weight: bold;")
@@ -358,10 +612,7 @@ class App(QMainWindow):
                     remaining -= part_len
                 username = "".join(parts)
             
-            # Add prefix and suffix
             username = prefix + username + suffix
-            
-            # Roblox validation: 3-20 chars, alphanumeric + underscores
             username = ''.join(c for c in username if c.isalnum() or c == '_')
             
             if 3 <= len(username) <= 20:
@@ -375,7 +626,6 @@ class App(QMainWindow):
         self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #c8e6c9; border-radius: 3px;")
 
     def test_webhook(self):
-        """Test the Discord webhook"""
         webhook_url = self.webhook_input.text().strip()
         
         if not webhook_url:
@@ -387,7 +637,7 @@ class App(QMainWindow):
                 "embeds": [{
                     "title": "🧪 Test Message",
                     "description": "Your webhook is working correctly!",
-                    "color": 5763719,  # Green color
+                    "color": 5763719,
                     "footer": {
                         "text": "Roblox Username Checker - Webhook Test"
                     }
@@ -412,6 +662,12 @@ class App(QMainWindow):
         
         debug = self.debug_checkbox.isChecked()
         webhook_url = self.webhook_input.text().strip() or None
+        auto_signup = self.auto_signup_checkbox.isChecked()
+        signup_password = self.signup_password_input.text().strip()
+        
+        if auto_signup and not DRISSION_AVAILABLE:
+            QMessageBox.warning(self, "Library Missing", "DrissionPage is not installed!\nInstall it with: pip install DrissionPage")
+            return
         
         self.progress_bar.setMaximum(len(usernames))
         self.progress_bar.setValue(0)
@@ -419,13 +675,17 @@ class App(QMainWindow):
         self.start_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         
+        status_text = f"🔄 Checking {len(usernames)} usernames"
+        if auto_signup:
+            status_text += " (auto sign-up enabled)"
         if webhook_url:
-            self.status_label.setText(f"🔄 Checking {len(usernames)} usernames (webhook enabled)...")
-        else:
-            self.status_label.setText(f"🔄 Checking {len(usernames)} usernames...")
+            status_text += " (webhook enabled)"
+        status_text += "..."
+        
+        self.status_label.setText(status_text)
         self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #fff9c4; border-radius: 3px;")
 
-        self.thread = Checker(usernames, webhook_url, debug)
+        self.thread = Checker(usernames, webhook_url, debug, auto_signup, signup_password)
         self.thread.update.connect(self.update_text)
         self.thread.pupdate.connect(self.update_progress)
         self.thread.finished.connect(self.checking_finished)
@@ -441,7 +701,17 @@ class App(QMainWindow):
     def checking_finished(self):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.status_label.setText("✅ Checking complete!")
+        
+        if self.thread and len(self.thread.created_accounts) > 0:
+            self.status_label.setText(f"✅ Complete! Created {len(self.thread.created_accounts)} accounts")
+            QMessageBox.information(self, "Success", 
+                f"🎉 Successfully created {len(self.thread.created_accounts)} accounts!\n\n"
+                f"Credentials saved to:\n"
+                f"• auto_created_accounts.txt\n"
+                f"• auto_created_cookies.json")
+        else:
+            self.status_label.setText("✅ Checking complete!")
+        
         self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #c8e6c9; border-radius: 3px;")
 
     def update_text(self, text):
@@ -461,10 +731,47 @@ class App(QMainWindow):
         usernames = []
         for line in txt.splitlines():
             u = line.strip()
-            # Roblox allows letters, numbers, and underscores
             if u and (u.replace('_', '').isalnum()):
                 usernames.append(u)
         return usernames
+    
+    def install_drissionpage(self):
+        """Install DrissionPage library"""
+        reply = QMessageBox.question(self, 'Install DrissionPage', 
+            "This will install DrissionPage library using pip.\n\n"
+            "After installation, you'll need to restart the application.\n\n"
+            "Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        
+        if reply == QMessageBox.Yes:
+            import subprocess
+            try:
+                self.status_label.setText("📥 Installing DrissionPage...")
+                self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #fff9c4; border-radius: 3px;")
+                QApplication.processEvents()  # Update UI
+                
+                result = subprocess.run([sys.executable, "-m", "pip", "install", "DrissionPage"], 
+                                      capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    QMessageBox.information(self, "Success", 
+                        "✅ DrissionPage installed successfully!\n\n"
+                        "Please restart the application to use Auto Sign-Up feature.")
+                    self.status_label.setText("✅ Installation complete - Please restart app")
+                    self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #c8e6c9; border-radius: 3px;")
+                else:
+                    QMessageBox.warning(self, "Installation Failed", 
+                        f"❌ Failed to install DrissionPage.\n\n"
+                        f"Error: {result.stderr}\n\n"
+                        f"Try manually: pip install DrissionPage")
+                    self.status_label.setText("❌ Installation failed")
+                    self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #f8d7da; border-radius: 3px;")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", 
+                    f"❌ An error occurred:\n{str(e)}\n\n"
+                    f"Try manually: pip install DrissionPage")
+                self.status_label.setText("❌ Installation error")
+                self.status_label.setStyleSheet("padding: 8px; font-weight: bold; background-color: #f8d7da; border-radius: 3px;")
 
 # ------------------- Run ------------------- #
 if __name__ == "__main__":
